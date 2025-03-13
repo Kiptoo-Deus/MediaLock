@@ -1,6 +1,12 @@
 #include <iostream>
 #include <fstream>
 #include <string>
+#include <C:/cryptopp/aes.h>
+#include <C:/cryptopp/modes.h>
+#include <C:/cryptopp/filters.h>
+#include <C:/cryptopp/osrng.h>
+
+using namespace CryptoPP;
 
 void createSampleMedia(const std::string& filename) {
     std::ofstream file(filename);
@@ -23,10 +29,48 @@ std::string readMedia(const std::string& filename) {
     return content;
 }
 
+std::string encryptMedia(const std::string& plaintext, const byte* key, const byte* iv) {
+    std::string ciphertext;
+    CBC_Mode<AES>::Encryption enc;
+    enc.SetKeyWithIV(key, AES::DEFAULT_KEYLENGTH, iv);
+    StringSource(plaintext, true, new StreamTransformationFilter(enc, new StringSink(ciphertext)));
+    return ciphertext;
+}
+
+std::string decryptMedia(const std::string& ciphertext, const byte* key, const byte* iv) {
+    std::string recovered;
+    CBC_Mode<AES>::Decryption dec;
+    dec.SetKeyWithIV(key, AES::DEFAULT_KEYLENGTH, iv);
+    StringSource(ciphertext, true, new StreamTransformationFilter(dec, new StringSink(recovered)));
+    return recovered;
+}
+
 int main() {
     std::cout << "MediaLock DRM Simulator v1.0\n";
-    createSampleMedia("sample_video.txt");
-    std::string content = readMedia("sample_video.txt");
-    std::cout << "Media content: " << content << "\n";
+
+    // Create sample media
+    std::string filename = "sample_video.txt";
+    createSampleMedia(filename);
+    std::string content = readMedia(filename);
+    std::cout << "Original content: " << content << "\n";
+
+    // Encryption setup
+    byte key[AES::DEFAULT_KEYLENGTH];
+    byte iv[AES::BLOCKSIZE];
+    AutoSeededRandomPool prng;
+    prng.GenerateBlock(key, sizeof(key));
+    prng.GenerateBlock(iv, sizeof(iv));
+
+    // Encrypt
+    std::string encrypted = encryptMedia(content, key, iv);
+    std::ofstream encFile("encrypted_video.bin", std::ios::binary);
+    encFile << encrypted;
+    encFile.close();
+    std::cout << "Media encrypted.\n";
+
+    // Decrypt
+    std::string decrypted = decryptMedia(encrypted, key, iv);
+    std::cout << "Decrypted content: " << decrypted << "\n";
+
     return 0;
 }
