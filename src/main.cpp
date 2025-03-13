@@ -8,29 +8,33 @@
 #include <C:/cryptopp/sha.h>     // For hashing
 #include <C:/cryptopp/hex.h>     // For hex encoding
 #include <C:/cryptopp/hmac.h>    // For HMAC
+
 using namespace CryptoPP;
 
-void createSampleMedia(const std::string& filename) {
-    std::ofstream file(filename);
-    if (file.is_open()) {
-        file << "This is a sample video file content.\n";
-        file.close();
-        std::cout << "Sample media created: " << filename << "\n";
-    } else {
-        std::cerr << "Error creating sample media.\n";
-    }
-}
-
-std::string readMedia(const std::string& filename) {
+// File I/O helpers
+std::string readFile(const std::string& filename) {
     std::ifstream file(filename, std::ios::binary);
     std::string content;
     if (file.is_open()) {
-        std::getline(file, content, '\0');
+        content.assign((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         file.close();
+    } else {
+        std::cerr << "Error: Could not read " << filename << "\n";
     }
     return content;
 }
 
+void writeFile(const std::string& filename, const std::string& data) {
+    std::ofstream file(filename, std::ios::binary);
+    if (file.is_open()) {
+        file.write(data.data(), data.size());
+        file.close();
+    } else {
+        std::cerr << "Error: Could not write to " << filename << "\n";
+    }
+}
+
+// Crypto functions
 std::string encryptMedia(const std::string& plaintext, const byte* key, const byte* iv) {
     std::string ciphertext;
     CBC_Mode<AES>::Encryption enc;
@@ -47,7 +51,7 @@ std::string decryptMedia(const std::string& ciphertext, const byte* key, const b
     return recovered;
 }
 
-// Simulate a machine ID
+// Simulate machine ID (replace with real hardware ID in production)
 std::string getMachineID() {
     std::string id;
     AutoSeededRandomPool prng;
@@ -61,34 +65,22 @@ std::string getMachineID() {
 
 // Load or generate secret key
 std::string loadOrGenerateSecretKey(const std::string& filename) {
-    std::ifstream file(filename, std::ios::binary);
-    std::string secretKey;
+    std::string secretKeyHex = readFile(filename);
     AutoSeededRandomPool prng;
 
-    if (file.is_open()) {
-        std::getline(file, secretKey, '\0');
-        file.close();
-        if (secretKey.size() == AES::DEFAULT_KEYLENGTH * 2) { // Hex-encoded length
-            return secretKey;
-        }
+    if (!secretKeyHex.empty() && secretKeyHex.size() == AES::DEFAULT_KEYLENGTH * 2) {
+        return secretKeyHex;
     }
 
-    // Generate new secret key if file doesn’t exist or is invalid
-    byte key[AES::DEFAULT_KEYLENGTH];
-    prng.GenerateBlock(key, sizeof(key));
-    HexEncoder encoder(new StringSink(secretKey));
-    encoder.Put(key, sizeof(key));
+    byte secretKey[AES::DEFAULT_KEYLENGTH];
+    prng.GenerateBlock(secretKey, sizeof(secretKey));
+    HexEncoder encoder(new StringSink(secretKeyHex));
+    encoder.Put(secretKey, sizeof(secretKey));
     encoder.MessageEnd();
 
-    std::ofstream outFile(filename, std::ios::binary);
-    if (outFile.is_open()) {
-        outFile << secretKey;
-        outFile.close();
-        std::cout << "Generated and saved new secret key to " << filename << "\n";
-    } else {
-        std::cerr << "Error saving secret key.\n";
-    }
-    return secretKey;
+    writeFile(filename, secretKeyHex);
+    std::cout << "Generated and saved secret key to " << filename << "\n";
+    return secretKeyHex;
 }
 
 // Generate license key with HMAC-SHA256
@@ -105,81 +97,91 @@ std::string generateLicenseKey(const std::string& machineID, const std::string& 
     return digest;
 }
 
-// Validate license key
+// Validate license
 bool validateLicense(const std::string& machineID, const std::string& licenseKey, const std::string& secretKeyHex) {
     std::string expectedKey = generateLicenseKey(machineID, secretKeyHex);
     return expectedKey == licenseKey;
 }
 
-// Save license to file
-void saveLicense(const std::string& licenseKey, const std::string& filename) {
-    std::ofstream file(filename);
-    if (file.is_open()) {
-        file << licenseKey;
-        file.close();
-        std::cout << "License saved to " << filename << "\n";
-    } else {
-        std::cerr << "Error saving license.\n";
-    }
-}
-
-// Load license from file
-std::string loadLicense(const std::string& filename) {
-    std::ifstream file(filename);
-    std::string licenseKey;
-    if (file.is_open()) {
-        std::getline(file, licenseKey);
-        file.close();
-    }
-    return licenseKey;
-}
-
-int main() {
+int main(int argc, char* argv[]) {
     std::cout << "MediaLock DRM Simulator v1.0\n";
 
-    // Load or generate secret key
-    std::string secretKeyHex = loadOrGenerateSecretKey("secret.key");
-    // std::cout << "Secret Key (hex): " << secretKeyHex << "\n"; // Uncomment for debugging (avoid in production)
+    if (argc < 2) {
+        std::cerr << "Usage: " << argv[0] << " <command> [args]\n"
+                  << "Commands:\n"
+                  << "  generate-license          Generate a license key\n"
+                  << "  encrypt <input> <output>  Encrypt a file\n"
+                  << "  decrypt <input> <output>  Decrypt a file\n";
+        return 1;
+    }
 
-    // Simulate machine ID
+    std::string command = argv[1];
     std::string machineID = getMachineID();
-    std::cout << "Machine ID: " << machineID << "\n";
+    std::string secretKeyHex = loadOrGenerateSecretKey("secret.key");
 
-    // Generate and save license key
-    std::string licenseKey = generateLicenseKey(machineID, secretKeyHex);
-    saveLicense(licenseKey, "license.key");
+    if (command == "generate-license") {
+        std::string licenseKey = generateLicenseKey(machineID, secretKeyHex);
+        writeFile("license.key", licenseKey);
+        std::cout << "License generated for Machine ID: " << machineID << "\n";
+        std::cout << "License key saved to license.key\n";
+        return 0;
+    }
 
-    // Load and validate license
-    std::string loadedLicense = loadLicense("license.key");
-    if (!validateLicense(machineID, loadedLicense, secretKeyHex)) {
-        std::cerr << "Invalid license key! Decryption aborted.\n";
+    // Load and validate license for encrypt/decrypt
+    std::string loadedLicense = readFile("license.key");
+    if (loadedLicense.empty() || !validateLicense(machineID, loadedLicense, secretKeyHex)) {
+        std::cerr << "Error: Invalid or missing license key. Run 'generate-license' first.\n";
         return 1;
     }
     std::cout << "License validated successfully.\n";
 
-    // Create sample media
-    std::string filename = "sample_video.txt";
-    createSampleMedia(filename);
-    std::string content = readMedia(filename);
-    std::cout << "Original content: " << content << "\n";
-
-    // Encryption setup
+    // Generate encryption key and IV
+    AutoSeededRandomPool prng;
     byte key[AES::DEFAULT_KEYLENGTH];
     byte iv[AES::BLOCKSIZE];
-    AutoSeededRandomPool prng;
     prng.GenerateBlock(key, sizeof(key));
     prng.GenerateBlock(iv, sizeof(iv));
 
-    // Encrypt
-    std::string encrypted = encryptMedia(content, key, iv);
-    std::ofstream encFile("encrypted_video.bin", std::ios::binary);
-    encFile << encrypted;
-    encFile.close();
-    std::cout << "Media encrypted.\n";
+    if (command == "encrypt") {
+        if (argc != 4) {
+            std::cerr << "Usage: " << argv[0] << " encrypt <input_file> <output_file>\n";
+            return 1;
+        }
+        std::string inputFile = argv[2];
+        std::string outputFile = argv[3];
+        std::string plaintext = readFile(inputFile);
+        if (plaintext.empty()) return 1;
 
-    // Decrypt
-    std::string decrypted = decryptMedia(encrypted, key, iv);
-    std::cout << "Decrypted content: " << decrypted << "\n";
+        std::string ciphertext = encryptMedia(plaintext, key, iv);
+        // Prepend key and IV to output file (in production, store these securely elsewhere)
+        std::string outputData = std::string((char*)key, AES::DEFAULT_KEYLENGTH) +
+                                 std::string((char*)iv, AES::BLOCKSIZE) + ciphertext;
+        writeFile(outputFile, outputData);
+        std::cout << "Encrypted " << inputFile << " to " << outputFile << "\n";
+    } else if (command == "decrypt") {
+        if (argc != 4) {
+            std::cerr << "Usage: " << argv[0] << " decrypt <input_file> <output_file>\n";
+            return 1;
+        }
+        std::string inputFile = argv[2];
+        std::string outputFile = argv[3];
+        std::string encryptedData = readFile(inputFile);
+        if (encryptedData.size() < AES::DEFAULT_KEYLENGTH + AES::BLOCKSIZE) {
+            std::cerr << "Error: Invalid encrypted file (too short).\n";
+            return 1;
+        }
+
+        // Extract key, IV, and ciphertext
+        const byte* loadedKey = (byte*)encryptedData.data();
+        const byte* loadedIV = loadedKey + AES::DEFAULT_KEYLENGTH;
+        std::string ciphertext = encryptedData.substr(AES::DEFAULT_KEYLENGTH + AES::BLOCKSIZE);
+        std::string decrypted = decryptMedia(ciphertext, loadedKey, loadedIV);
+        writeFile(outputFile, decrypted);
+        std::cout << "Decrypted " << inputFile << " to " << outputFile << "\n";
+    } else {
+        std::cerr << "Error: Unknown command '" << command << "'\n";
+        return 1;
+    }
 
     return 0;
 }
